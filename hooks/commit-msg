@@ -8,10 +8,13 @@ for py in python3 python py; do
 done
 cat >&2 <<'EOF'
 
-  КОММИТ ОТКЛОНЁН: не найден рабочий Python, текст коммита не проверен.
-  Заглушка Microsoft Store («python» из WindowsApps) не годится (30-02).
-  Добавьте каталог настоящего Python в PATH оболочки, из которой
-  запускается git, и повторите коммит. Правило: skill-skill, 40-01.
+  КОММИТ ОТКЛОНЁН: не найден рабочий Python — текст коммита не проверен.
+  Причина: в PATH оболочки, из которой запущен git, нет настоящего
+  Python; «python» из WindowsApps — заглушка Microsoft Store (код 49).
+  Решение: добавить каталог Python в PATH и повторить коммит, например
+  в PowerShell:  $env:Path = "<каталог Python>;" + $env:Path
+  Если Python есть в PATH пользователя, хватит нового терминала.
+  Подробно: skill-skill, knowledge/30_ГРАБЛИ/30-02.
 
 EOF
 exit 1

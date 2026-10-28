@@ -55,5 +55,6 @@ curl -s -H "Authorization: token $TOKEN" https://api.github.com/user/repos \
 | вернуть PR | `POST /repos/{owner}/{repo}/pulls/{N}/reviews`, `"event":"REQUEST_CHANGES"` |
 
 Сливать PR через API или кнопкой не нужно: владелец сливает локально
-`git merge --no-ff` (40-02, 30-03). Форк, PR и отзыв через REST — по
+`git merge --no-ff` (40-02, 30-03); `403` на `PUT …/pulls/{N}/merge` —
+вы не владелец, PR оставить ему. Форк, PR и отзыв через REST — по
 документации, не проверено.

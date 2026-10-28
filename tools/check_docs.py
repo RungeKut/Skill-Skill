@@ -29,6 +29,15 @@ VALID_STATUS = ("проверено", "не проверено", "устарел
 SKILL_MAX_BYTES = 4096
 DESCRIPTION_MAX = 1024
 MAX_LINES = 200
+NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+NAME_MAX = 64
+REPO_FILES = (
+    (".gitattributes", "переводы строк будут зависеть от core.autocrlf "
+                       "машины — взять из шаблона skill-skill"),
+    ("LICENSE", "публичный репозиторий без лицензии — пользоваться им "
+                "нельзя; взять MIT из шаблона skill-skill"),
+)
+INDEX_HEADER = "| id | Утверждение | status | Файл |"
 
 TEXT_EXT = (".md", ".py", ".ps1", ".psm1", ".bat", ".cmd", ".sh", ".txt",
             ".cfg", ".ini", ".toml", ".json", ".yml", ".yaml", ".xml",
@@ -56,9 +65,12 @@ ATTRIBUTION = (
 LEGACY_CODE = (
     (re.compile(r"\.claude[/\\]|\.kimi-code", re.I),
      "путь конкретного агента — корень = папка SKILL.md (30-01)"),
-    (re.compile(r"(environ|getenv|\$env:)\W{0,3}[\w\[\]\"'(]{0,12}_HOME",
-                re.I),
+    (re.compile(r"(environ|getenv|\$env:)[\w.\[\]\"'( ]{0,40}_HOME\b"
+                r"|%\w+_HOME%|\$\{?\w+_HOME\b", re.I),
      "переменная *_HOME — соседей искать в <родитель корня>/<name> (30-01)"),
+    (re.compile(r"\b[A-Za-z]:[/\\]([^\s\"'<>|*?]*[/\\])?skills[/\\]", re.I),
+     "жёсткий путь к папке скиллов — корень = папка SKILL.md, сосед — "
+     "<родитель корня>/<name> (30-01)"),
     (re.compile(r"\bmklink\b", re.I), "junction — клон и есть папка скилла"),
     (re.compile(r"skill[/\\]SKILL\.md"), "skill/SKILL.md — SKILL.md в корне"),
 )
@@ -219,6 +231,10 @@ def check_skill_md(root):
     if fm.get("name") != name:
         out.append("SKILL.md: name %r, а папка %r — клон кладётся в папку "
                    "<name>" % (fm.get("name"), name))
+    if not (len(name) <= NAME_MAX and NAME_RE.match(name)):
+        out.append("name %r: нужно 1–%d знаков, строчная латиница, цифры и "
+                   "дефис между ними — иначе часть агентов (opencode) скилл "
+                   "не загрузит" % (name, NAME_MAX))
     raw = fm.get("description", "")
     desc = unquote(raw)
     if not desc:
@@ -233,6 +249,8 @@ def check_skill_md(root):
     if not is_self(root) and "skill-skill" not in text:
         out.append("SKILL.md: нет строки «общие правила — соседний скилл "
                    "skill-skill»")
+    out += ["нет %s: %s" % (rel, why) for rel, why in REPO_FILES
+            if not os.path.exists(os.path.join(root, rel))]
     return out
 
 
@@ -287,6 +305,7 @@ def check_knowledge(root):
         out.append("нет knowledge/INDEX.md")
     else:
         text = read(index)
+        out += check_index_header(text)
         linked = {l.replace("\\", "/") for l in link_re.findall(text)}
         out += ["%s: файла нет в INDEX.md" % rel(p)
                 for p in files if rel(p) not in linked]
@@ -314,6 +333,30 @@ def check_knowledge(root):
             if not os.path.exists(target):
                 out.append("%s: битая ссылка -> %s" % (rel(path), link))
     return out, ids
+
+
+def cells(line):
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def check_index_header(text):
+    """Первая таблица INDEX.md — id | утверждение | status | файл.
+
+    Ссылка на файл может стоять в ячейке id вместо столбца «Файл», статус —
+    называться «Статус»; лишние столбцы (когда читать) допустимы.
+    """
+    rows = [l for l in text.splitlines() if l.startswith("|")]
+    if not rows:
+        return ["INDEX.md: нет таблицы записей — нужна %s (00)" % INDEX_HEADER]
+    head = [c.lower() for c in cells(rows[0])]
+    first = cells(rows[2])[0] if len(rows) > 2 else ""
+    ok = len(head) >= 3 and head[0] == "id" and head[1] == "утверждение" \
+        and ({"status", "статус"} & set(head)) \
+        and ("файл" in head or "](" in first)
+    if ok:
+        return []
+    return ["INDEX.md: заголовок таблицы %r — нужен %s (00)"
+            % (rows[0].strip(), INDEX_HEADER)]
 
 
 def check_texts(root, files, words, local):
@@ -428,18 +471,74 @@ def check_history(root, words):
         low = msg.lower()
         if any(w.lower() in low for w in words):
             found.setdefault("стоп-слово в сообщении", []).append(h)
-    return ["%s — %d: %s" % (what, len(hs), ", ".join(hs))
-            for what, hs in sorted(found.items())]
+    out = ["%s — %d: %s" % (what, len(hs), ", ".join(hs))
+           for what, hs in sorted(found.items())]
+    return out + history_content(root, words)
+
+
+def mask(word):
+    """Слово в отчёте — первая буква и длина: отчёт читают и пересылают."""
+    return "%s…(%d)" % (word[:1], len(word))
+
+
+def added_text(root):
+    """{(коммит, файл): имя файла и добавленные строки} по всей истории.
+
+    Любое содержимое, когда-либо лежавшее в репозитории, добавлено каким-то
+    коммитом, поэтому строк «+» из git log -p хватает. Изменения, внесённые
+    только разрешением конфликта при слиянии, не видны.
+    """
+    log = git(root, "-c", "core.quotepath=off", "log", "--all", "-p",
+              "--no-color", "--no-ext-diff", "--no-renames",
+              "--format=%x1e%h")
+    out = {}
+    for rec in (log or "").split("\x1e"):
+        lines = rec.split("\n")
+        h, path, chunks, header = lines[0].strip(), None, [], True
+        for line in lines[1:]:
+            if line.startswith("diff --git "):
+                if path:
+                    out[(h, path)] = "\n".join(chunks).lower()
+                path, chunks, header = None, [], True
+            elif header and line.startswith("+++ "):
+                target = line[4:]
+                path = target[2:] if target.startswith("b/") else None
+                chunks = [path or ""]
+            elif line.startswith("@@"):
+                header = False
+            elif not header and line.startswith("+"):
+                chunks.append(line[1:])
+        if path:
+            out[(h, path)] = "\n".join(chunks).lower()
+    return out
+
+
+def history_content(root, words, shown=8):
+    hits = {}
+    lowered = {w.lower() for w in words}
+    for (h, path), text in added_text(root).items():
+        for w in lowered:
+            if w in text:
+                hits.setdefault(w, []).append("%s %s" % (h, path))
+    out = []
+    for w in sorted(hits):
+        places = sorted(hits[w])
+        more = len(places) - shown
+        out.append("стоп-слово %s в содержимом — %d: %s%s" % (
+            mask(w), len(places), ", ".join(places[:shown]),
+            ", …ещё %d" % more if more > 0 else ""))
+    return out
 
 
 def unpushed(root):
     branch = git(root, "symbolic-ref", "--short", "HEAD") or "?"
     n = git(root, "rev-list", "--count", "@{u}..HEAD")
-    if n is None:
+    if n is None and git(root, "rev-parse", "--verify", "--quiet",
+                         "refs/remotes/origin/%s" % branch):
         n = git(root, "rev-list", "--count", "origin/%s..HEAD" % branch)
     if n is None:
-        return "ветка %s; удалённой ветки нет — неотправлены все %s" \
-            % (branch, git(root, "rev-list", "--count", "HEAD") or "0")
+        return "ветка %s; удалённой ветки %s нет (репозиторий не создан или " \
+               "не отправлен)" % (branch, branch)
     return "ветка %s; неотправленных коммитов: %s" % (branch, n)
 
 
