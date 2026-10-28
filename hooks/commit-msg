@@ -1,0 +1,17 @@
+#!/bin/sh
+here=$(cd "$(dirname "$0")/.." && { pwd -W 2>/dev/null || pwd; })
+root=$(git rev-parse --show-toplevel)
+for py in python3 python py; do
+    if command -v "$py" >/dev/null 2>&1 && "$py" -c "import sys" >/dev/null 2>&1; then
+        exec "$py" "$here/tools/check_msg.py" --root "$root" "$1"
+    fi
+done
+cat >&2 <<'EOF'
+
+  КОММИТ ОТКЛОНЁН: не найден рабочий Python, текст коммита не проверен.
+  Заглушка Microsoft Store («python» из WindowsApps) не годится (30-02).
+  Добавьте каталог настоящего Python в PATH оболочки, из которой
+  запускается git, и повторите коммит. Правило: skill-skill, 40-01.
+
+EOF
+exit 1
