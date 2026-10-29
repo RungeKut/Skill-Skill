@@ -49,7 +49,7 @@ def main(argv):
         print("    - " + h)
     print("")
     print("  Репозиторий публичный: в сообщении нет рабочих проектов и нет")
-    print("  соавторов (строка соавторства, «Generated with», 🤖, noreply ИИ);")
+    print("  подписей (строки «…-by:», «Generated with», 🤖, noreply ИИ);")
     print("  автор — тот, кто задан для клона. Правило: skill-skill,")
     print("  knowledge/40_СРЕДА/40-02. Перепишите сообщение и повторите.")
     print("")

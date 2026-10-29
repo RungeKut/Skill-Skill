@@ -26,7 +26,8 @@ BRANCH = "main"
 
 REQUIRED = ("id", "title", "status")
 VALID_STATUS = ("проверено", "не проверено", "устарело", "действует")
-SKILL_MAX_BYTES = 4096
+# Токенизатор Claude не опубликован; русский текст — 2,5–3 знака на токен.
+SKILL_MAX_CHARS = 2400
 DESCRIPTION_MAX = 1024
 MAX_LINES = 200
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -57,7 +58,8 @@ part assembly docs index rules agents claude code src source release debug
 документы правила агенты состояние индекс""".split())
 
 ATTRIBUTION = (
-    (re.compile(r"строка соавторства\s*:", re.I), "трейлер строка соавторства"),
+    (re.compile(r"^\s*[a-z]+(-[a-z]+)*-by\s*:", re.I | re.M),
+     "строка-подпись «…-by:»"),
     (re.compile(r"generated with", re.I), "«Generated with»"),
     (re.compile(r"noreply@anthropic\.com", re.I), "адрес noreply ИИ"),
     (re.compile("\U0001F916"), "значок 🤖"),
@@ -222,10 +224,9 @@ def check_skill_md(root):
     if not os.path.exists(skill):
         return out + ["нет SKILL.md в корне — агент не увидит скилл"]
     text = read(skill)
-    size = len(text.encode("utf-8"))
-    if size > SKILL_MAX_BYTES:
-        out.append("SKILL.md %d байт, предел %d — подробности в базу"
-                   % (size, SKILL_MAX_BYTES))
+    if len(text) > SKILL_MAX_CHARS:
+        out.append("SKILL.md %d знаков, предел %d (≈ 1024 токена) — "
+                   "подробности в базу" % (len(text), SKILL_MAX_CHARS))
     fm = front_matter(text) or {}
     name = os.path.basename(os.path.abspath(root))
     if fm.get("name") != name:
